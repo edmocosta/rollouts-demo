@@ -26,8 +26,8 @@ build:
 
 .PHONY: image
 image:
-	docker build --build-arg COLOR=${COLOR} --build-arg ERROR_RATE=${ERROR_RATE} --build-arg LATENCY=${LATENCY} -t $(IMAGE_PREFIX)rollouts-demo:${IMAGE_TAG} .
-	@if [ "$(DOCKER_PUSH)" = "true" ] ; then docker push $(IMAGE_PREFIX)rollouts-demo:$(IMAGE_TAG) ; fi
+	docker build --build-arg COLOR=${COLOR} --build-arg ERROR_RATE=${ERROR_RATE} --build-arg LATENCY=${LATENCY} -t $(IMAGE_PREFIX)nr-rollouts-demo:${IMAGE_TAG} .
+	@if [ "$(DOCKER_PUSH)" = "true" ] ; then docker push $(IMAGE_PREFIX)nr-rollouts-demo:$(IMAGE_TAG) ; fi
 
 .PHONY: load-tester-image
 load-tester-image:
@@ -49,4 +49,4 @@ release:
 
 .PHONY: clean
 clean:
-	rm -f rollouts-demo
+	rm -f nr-rollouts-demo

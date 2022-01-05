@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
+	newrelic "github.com/newrelic/go-agent/v3/newrelic"
 	"io/ioutil"
 	"log"
 	"math/rand"
@@ -13,8 +15,10 @@ import (
 	"os/signal"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -42,6 +46,49 @@ var (
 )
 
 func main() {
+	var app *newrelic.Application
+	var err error
+
+	useEnvConfig := os.Getenv("NEW_RELIC_USE_ENV_CONFIG")
+	if useEnvConfig == "true" {
+		app, err = newrelic.NewApplication(newrelic.ConfigFromEnvironment())
+	} else {
+		app, err = newrelic.NewApplication(
+			newrelic.ConfigDebugLogger(os.Stdout),
+			newrelic.ConfigEnabled(true),
+			newrelic.ConfigDistributedTracerEnabled(true),
+			newrelic.ConfigLicense(os.Getenv("NEW_RELIC_LICENSE_KEY")),
+			newrelic.ConfigAppName("connect-service-cell-app"),
+			func(cfg *newrelic.Config) {
+				cfg.ErrorCollector.Enabled = true
+				cfg.ErrorCollector.RecordPanics = true
+				cfg.ErrorCollector.CaptureEvents = true
+				cfg.ErrorCollector.Attributes.Enabled = true
+				cfg.TransactionTracer.Enabled = true
+				cfg.TransactionTracer.Attributes.Enabled = true
+				cfg.CustomInsightsEvents.Enabled = true
+				cfg.Utilization.DetectKubernetes = true
+				cfg.Transport = &http.Transport{
+					TLSClientConfig: &tls.Config{
+						InsecureSkipVerify: true,
+					},
+				}
+
+				if envLabels := os.Getenv("NEW_RELIC_LABELS"); envLabels != "" {
+					if labels := getLabels(envLabels); len(labels) > 0 {
+						cfg.Labels = labels
+					} else {
+						cfg.Error = fmt.Errorf("invalid NEW_RELIC_LABELS value: %s", envLabels)
+					}
+				}
+			})
+	}
+
+	if nil != err {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
 	var (
 		listenAddr       string
 		terminationDelay int
@@ -56,7 +103,7 @@ func main() {
 
 	router := http.NewServeMux()
 	router.Handle("/", http.StripPrefix("/", http.FileServer(http.Dir("./"))))
-	router.HandleFunc("/color", getColor)
+	router.HandleFunc(newrelic.WrapHandleFunc(app, "/color", getColor))
 
 	server := &http.Server{
 		Addr:    listenAddr,
@@ -103,6 +150,38 @@ type colorParameters struct {
 	DelayLength      int    `json:"delayLength,omitempty"`
 
 	Return500Probability *int `json:"return500,omitempty"`
+}
+
+func getLabels(env string) map[string]string {
+	out := make(map[string]string)
+	env = strings.Trim(env, ";\t\n\v\f\r ")
+	for _, entry := range strings.Split(env, ";") {
+		if entry == "" {
+			return nil
+		}
+		split := strings.Split(entry, ":")
+		if len(split) != 2 {
+			return nil
+		}
+		left := strings.TrimSpace(split[0])
+		right := strings.TrimSpace(split[1])
+		if left == "" || right == "" {
+			return nil
+		}
+		if utf8.RuneCountInString(left) > 255 {
+			runes := []rune(left)
+			left = string(runes[:255])
+		}
+		if utf8.RuneCountInString(right) > 255 {
+			runes := []rune(right)
+			right = string(runes[:255])
+		}
+		out[left] = right
+		if len(out) >= 64 {
+			return out
+		}
+	}
+	return out
 }
 
 func getColor(w http.ResponseWriter, r *http.Request) {
